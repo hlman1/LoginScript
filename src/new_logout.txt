@@ -1,0 +1,41 @@
+def logout_steam(self):
+    """
+    退出 Steam 登录（完全清除浏览器状态）
+
+    Returns:
+        bool: 退出是否成功
+    """
+    print("\n🚪 正在退出 Steam...")
+
+    try:
+        # 完全清除所有数据
+        self.context.clear_cookies()
+
+        # 清除所有 cookies
+        cookies = self.page.context.cookies()
+        for cookie in cookies:
+            self.page.context.remove_cookies([cookie])
+
+        # 清除本地存储和会话存储
+        self.page.evaluate('')
+                () => {
+                    localStorage.clear();
+                    sessionStorage.clear();
+                }
+            '')
+
+        print("✅ 已清除所有登录信息")
+
+        # 询问 logout 页面（双重保险）
+        try:
+            logout_url = "https://steamcommunity.com/login/logout/"
+            self.page.goto(logout_url, wait_until="networkidle", timeout=15000)
+            time.sleep(2)
+        except:
+            pass
+
+        return True
+
+    except Exception as e:
+        print(f"⚠️ 退出过程出错: {e}")
+        return False

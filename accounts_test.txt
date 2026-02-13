@@ -1,0 +1,5 @@
+# Steam 账号批量登录 - 测试账号
+# 格式：Steam账号	Steam密码	邮箱	邮箱密码	邮箱地址
+
+# 只测试第二个账号
+rex78532	PeF753606	n7w77v@sdhgz.cn	374777	a.dcmya.com

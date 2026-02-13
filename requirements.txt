@@ -1,0 +1,8 @@
+# Steam 账号批量登录脚本 - 依赖库
+
+# Playwright - 浏览器自动化框架
+playwright==1.48.0
+
+# Python 版本要求: Python 3.8+
+
+# 运行命令: python src/login_steam.py

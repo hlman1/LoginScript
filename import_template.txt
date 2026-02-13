@@ -1,0 +1,13 @@
+# 中文格式账号导入模板
+# 说明：将你的账号信息粘贴到下方，每行一个账号
+# 然后运行: python src\chinese_to_tab.py import_template.txt
+
+# 支持的格式示例（复制修改为你的信息）：
+steam账号ta3az7wf4vg3密码Av6Ih8Bh8Fd7邮箱账号FCJPT30502@gdh333.cn邮箱密码MLOBV00990邮箱地址x.pubg.fit
+账号rex78532密码PeF753606邮箱账号n7w77v@sdhgz.cn邮箱密码374777邮箱登录地址https://a.dcmya.com/
+
+# 说明：
+# - 可以使用 "steam账号" 或 "账号" 关键词
+# - 邮箱地址支持带 https:// 或不带，工具会自动清理
+# - 每行一个账号，空行会被忽略
+# - 保存文件后运行转换工具即可自动导入到 accounts.txt

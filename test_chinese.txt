@@ -1,0 +1,5 @@
+# Steam 账号批量登录脚本 - 最终测试版
+# 格式：Tab 分隔
+
+ta3az7wf4vg3	Av6Ih8Bh8Fd7	FCJPT30502@gdh333.cn	MLOBV00990	x.pubg.fit
+rex78532	PeF753606	n7w77v@sdhgz.cn	374777	a.dcmya.com
