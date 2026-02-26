@@ -9,7 +9,20 @@ Steam 账号批量登录脚本
 import time
 import os
 import sys
+import subprocess
 from pathlib import Path
+from datetime import datetime
+
+# Windows 键盘模拟支持
+try:
+    import pyautogui
+    PYAUTOGUI_AVAILABLE = True
+    # 设置 pyautogui 安全间隔
+    pyautogui.PAUSE = 0.5
+except ImportError:
+    PYAUTOGUI_AVAILABLE = False
+    print("⚠️  pyautogui 未安装，将使用备用方法")
+    print("💡 安装方法: pip install pyautogui")
 
 # 修复 Windows 控制台编码问题
 if sys.platform == 'win32':
@@ -25,6 +38,9 @@ class SteamLoginBatch:
 
     # Steam 页面 URL
     STEAM_LOGIN_URL = "https://steamcommunity.com/login/home/"
+    PUBG_APP_ID = "578080"
+    PUBG_STORE_URL = f"https://store.steampowered.com/app/{PUBG_APP_ID}/"
+    STEAM_EXE_PATH = r"F:\steam\Steam.exe"  # Steam 客户端路径
 
     def __init__(self, accounts_file="accounts.txt", headless=False):
         """
@@ -349,6 +365,608 @@ class SteamLoginBatch:
         else:
             print("✅ 无需 Steam Guard 验证")
 
+    def kill_all_processes(self):
+        """关闭所有 Steam 和 PUBG 相关进程（彻底清理）"""
+        print("🧹 清理所有进程...")
+
+        processes_to_kill = [
+            "steam.exe",
+            "steamwebhelper.exe",
+            "gameoverlayui.exe",
+            "steamservice.exe",
+            "TslGame.exe",  # PUBG
+            "BEService.exe",
+            "Steam.exe",    # 大小写变体
+            "SteamWebHelper.exe"
+        ]
+
+        # 第一次关闭尝试
+        for proc in processes_to_kill:
+            try:
+                subprocess.run(f"taskkill /F /IM {proc} >nul 2>&1", shell=True)
+            except:
+                pass
+
+        # 等待进程退出
+        time.sleep(2)
+
+        # 第二次关闭尝试（针对顽固进程）
+        for proc in processes_to_kill:
+            try:
+                subprocess.run(f"taskkill /F /IM {proc} >nul 2>&1", shell=True)
+            except:
+                pass
+
+        # 等待并验证
+        time.sleep(2)
+
+        # 验证关键进程是否已关闭
+        still_running = []
+        for proc in ["steam.exe", "TslGame.exe"]:
+            if self.check_process_running(proc):
+                still_running.append(proc)
+
+        if still_running:
+            print(f"   ⚠️  以下进程仍在运行: {', '.join(still_running)}")
+            print("   💡 再次尝试强制关闭...")
+            for proc in still_running:
+                subprocess.run(f"taskkill /F /IM {proc} >nul 2>&1", shell=True)
+            time.sleep(2)
+
+        print("✅ 所有进程已清理")
+
+    def check_process_running(self, process_name):
+        """检查进程是否正在运行"""
+        try:
+            # 使用 tasklist 命令检查进程
+            result = subprocess.run(
+                ['tasklist', '/FI', f'IMAGENAME eq {process_name}'],
+                capture_output=True,
+                text=True,
+                shell=True
+            )
+            # 检查输出中是否包含进程名
+            return process_name in result.stdout
+        except:
+            return False
+
+    def list_game_processes(self):
+        """列出所有游戏相关进程"""
+        try:
+            result = subprocess.run(
+                ['tasklist', '/FI', 'IMAGENAME eq TslGame.exe', '/FI', 'IMAGENAME eq BEService.exe', '/V'],
+                capture_output=True,
+                text=True,
+                shell=True
+            )
+            print("📋 当前游戏进程状态:")
+            for line in result.stdout.split('\n')[:20]:  # 只显示前20行
+                if line.strip():
+                    print(f"   {line}")
+        except:
+            pass
+
+    def wait_for_steam_ready(self, timeout=30):
+        """等待 Steam 完全登录并准备好"""
+        print("⏳ 等待 Steam 完全准备就绪...")
+
+        for i in range(timeout):
+            # 检查 Steam 进程是否在运行
+            if not self.check_process_running("steam.exe"):
+                time.sleep(1)
+                continue
+
+            # 检查是否有多个 Steam 进程（表示已完全启动）
+            # 通常 Steam 完全启动后会有 steamwebhelper.exe 等辅助进程
+            if self.check_process_running("steamwebhelper.exe"):
+                print(f"✅ Steam 已就绪 (耗时 {i+1} 秒)")
+                return True
+
+            time.sleep(1)
+
+            if (i + 1) % 5 == 0:
+                print(f"   等待 Steam 启动... ({i+1}/{timeout}秒)")
+
+        print("⚠️  Steam 可能未完全就绪，但继续尝试...")
+        return True
+
+    def steam_login(self, username, password):
+        """
+        使用 Steam 命令行登录
+
+        Returns:
+            bool: 登录是否成功
+        """
+        print(f"\n🔐 使用 Steam 客户端登录: {username}")
+
+        try:
+            # 步骤1：确保没有残留的 Steam 进程
+            print("   💡 检查并清理残留的 Steam 进程...")
+            if self.check_process_running("steam.exe"):
+                print("   ⚠️  检测到残留 Steam 进程，先关闭...")
+                self.kill_all_processes()
+                time.sleep(3)
+
+            # 再次确认所有 Steam 进程都已关闭
+            if self.check_process_running("steam.exe"):
+                print("   ⚠️  Steam 进程仍在运行，等待退出...")
+                time.sleep(5)
+                if self.check_process_running("steam.exe"):
+                    print("   ⚠️  强制关闭 Steam...")
+                    self.kill_all_processes()
+                    time.sleep(3)
+
+            # 步骤2：启动 Steam 并登录
+            # 使用 -logout 参数确保先退出旧的登录状态
+            cmd = [self.STEAM_EXE_PATH, "-login", username, password]
+            print(f"📍 执行: steam.exe -login {username} ********")
+
+            # 启动 Steam（后台）
+            subprocess.Popen(cmd, shell=False)
+
+            # 等待 Steam 完全启动和登录
+            self.wait_for_steam_ready(timeout=30)
+
+            # 验证 Steam 进程是否运行
+            if self.check_process_running("steam.exe"):
+                print("✅ Steam 登录完成")
+                return True
+            else:
+                print("⚠️  Steam 进程未检测到")
+                return False
+
+        except Exception as e:
+            print(f"⚠️  Steam 登录失败: {e}")
+            return False
+
+    def send_enter_key(self):
+        """发送回车键（用于同意用户许可协议）"""
+        if PYAUTOGUI_AVAILABLE:
+            try:
+                print("   💻 使用 pyautogui 发送回车键...")
+                pyautogui.press('enter')
+                return True
+            except Exception as e:
+                print(f"   ⚠️  pyautogui 失败: {e}，尝试备用方法...")
+
+        # 备用方法：使用 PowerShell
+        try:
+            print("   💻 使用 PowerShell 发送回车键...")
+            # 先激活当前窗口
+            activate_cmd = "(New-Object -ComObject WScript.Shell).AppActivate((Get-Process | Where-Object {$_.MainWindowTitle -like '*许可*' -or $_.MainWindowTitle -like '*PUBG*' -or $_.MainWindowTitle -like '*License*'}).MainWindowTitle)"
+            subprocess.run(["powershell", "-Command", activate_cmd], capture_output=True, timeout=5)
+            time.sleep(0.3)
+
+            # 发送回车键
+            ps_command = "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')"
+            subprocess.run(["powershell", "-Command", ps_command], capture_output=True, timeout=5)
+            return True
+        except Exception as e:
+            print(f"   ⚠️  PowerShell 方法失败: {e}")
+            return False
+
+    def activate_window_by_title(self, title_keyword):
+        """通过窗口标题激活窗口"""
+        try:
+            ps_script = f'''
+            $process = Get-Process | Where-Object {{$_.MainWindowTitle -like "*{title_keyword}*"}}
+            if ($process) {{
+                (New-Object -ComObject WScript.Shell).AppActivate($process.MainWindowTitle) | Out-Null
+                Write-Host "Activated: $($process.MainWindowTitle)"
+            }}
+            '''
+            result = subprocess.run(
+                ["powershell", "-Command", ps_script],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return "Activated:" in result.stdout
+        except:
+            return False
+
+    def activate_and_click_accept(self):
+        """激活窗口并点击"接受"按钮（改进版）"""
+        # 尝试激活包含特定关键词的窗口
+        keywords = ["许可", "协议", "License", "Agreement", "User", "EULA", "Terms", "PUBG", "BATTLEGROUNDS", "Steam", "Subscriber"]
+
+        for keyword in keywords:
+            if self.activate_window_by_title(keyword):
+                print(f"   ✅ 激活了包含 '{keyword}' 的窗口")
+                break
+
+        # 先截图保存当前状态（用于调试）
+        self._save_debug_screenshot("before_accept")
+
+        # 方法1：使用 Tab + Space（Windows对话框通常可以用Tab+Space确认）
+        print("   💡 方法1: 尝试 Tab + Space...")
+        try:
+            if PYAUTOGUI_AVAILABLE:
+                for _ in range(3):
+                    pyautogui.press('tab')
+                    time.sleep(0.3)
+                pyautogui.press('space')
+                print("   ✅ 已发送 Tab + Space")
+                time.sleep(2)
+
+                if self.check_process_running("TslGame.exe"):
+                    print("   ✅ Tab + Space 成功！游戏已启动")
+                    return True
+        except Exception as e:
+            print(f"   ⚠️  Tab + Space 失败: {e}")
+
+        # 方法2：鼠标点击 - 中文Windows中"接受"按钮通常在左侧！
+        print("   💡 方法2: 尝试鼠标点击（中文Windows - 接受按钮在左侧）...")
+        try:
+            if PYAUTOGUI_AVAILABLE:
+                screen_width, screen_height = pyautogui.size()
+                print(f"   📐 屏幕分辨率: {screen_width}x{screen_height}")
+
+                # 中文Windows对话框：左侧是"确定/接受"，右侧是"取消"
+                # 点击窗口中心的左侧区域
+                positions = [
+                    (screen_width // 2 - 100, screen_height // 2 + 50),  # 中心偏左
+                    (screen_width // 2 - 150, screen_height // 2 + 50),  # 更靠左
+                    (screen_width // 2 - 50, screen_height // 2 + 50),   # 稍微偏左
+                    (screen_width // 2 - 200, screen_height // 2 + 50),  # 最左
+                ]
+
+                for idx, (x, y) in enumerate(positions):
+                    print(f"   🖱️  点击位置 {idx+1}: ({x}, {y})")
+                    pyautogui.click(x, y)
+                    time.sleep(1.5)
+
+                    # 检查游戏是否已启动
+                    if self.check_process_running("TslGame.exe"):
+                        print(f"   ✅ 点击成功！游戏已启动")
+                        self._save_debug_screenshot("success_accept")
+                        return True
+                    else:
+                        # 截图记录这次点击后的状态
+                        self._save_debug_screenshot(f"after_click_{idx+1}")
+
+                print("   ⚠️  鼠标点击未成功启动游戏")
+        except Exception as e:
+            print(f"   ⚠️  鼠标点击失败: {e}")
+
+        # 方法3：尝试 Alt+Y（Yes的快捷键）
+        print("   💡 方法3: 尝试 Alt+Y（Yes快捷键）...")
+        try:
+            if PYAUTOGUI_AVAILABLE:
+                pyautogui.hotkey('alt', 'y')
+                print("   ✅ 已发送 Alt+Y")
+                time.sleep(2)
+
+                if self.check_process_running("TslGame.exe"):
+                    print("   ✅ Alt+Y 成功！游戏已启动")
+                    return True
+        except Exception as e:
+            print(f"   ⚠️  Alt+Y 失败: {e}")
+
+        # 方法4：备用方案 - 尝试回车键
+        print("   💡 备用方案：尝试回车键...")
+        self.send_enter_key()
+        time.sleep(2)
+        return False
+
+    def _save_debug_screenshot(self, label):
+        """保存调试截图"""
+        try:
+            if PYAUTOGUI_AVAILABLE:
+                screenshot_dir = Path("screenshots")
+                screenshot_dir.mkdir(exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = screenshot_dir / f"{label}_{timestamp}.png"
+                pyautogui.screenshot(str(filename))
+                print(f"   📷 已保存截图: {filename}")
+        except Exception as e:
+            print(f"   ⚠️  截图失败: {e}")
+
+    def activate_and_send_enter(self):
+        """激活窗口并发送回车键（增强版）"""
+        # 首先尝试新的点击接受按钮方法
+        print("   💡 尝试点击接受按钮...")
+        if self.activate_and_click_accept():
+            return True
+
+        # 之前的备用方法
+        # 尝试激活包含特定关键词的窗口
+        keywords = ["许可", "协议", "License", "Agreement", "User", "EULA", "Terms", "Accept", "PUBG", "BATTLEGROUNDS", "Steam", "Subscriber"]
+
+        for keyword in keywords:
+            if self.activate_window_by_title(keyword):
+                print(f"   ✅ 激活了包含 '{keyword}' 的窗口")
+                time.sleep(0.3)
+                # 先尝试回车键
+                self.send_enter_key()
+                # 再尝试空格键（有时协议窗口用空格确认）
+                try:
+                    if PYAUTOGUI_AVAILABLE:
+                        pyautogui.press('space')
+                except:
+                    pass
+                return True
+
+        # 如果没有找到特定窗口，尝试激活最前面的窗口
+        print("   ⚠️  未找到特定窗口，尝试激活前台窗口...")
+        try:
+            # 使用 Alt 键切换焦点到窗口
+            if PYAUTOGUI_AVAILABLE:
+                pyautogui.press('alt')
+                time.sleep(0.2)
+                pyautogui.press('tab')
+                time.sleep(0.2)
+            self.send_enter_key()
+            # 也尝试空格键
+            if PYAUTOGUI_AVAILABLE:
+                pyautogui.press('space')
+            return True
+        except:
+            pass
+
+        # 最后尝试：直接发送回车键和空格键
+        print("   ⚠️  直接发送确认键...")
+        self.send_enter_key()
+        try:
+            if PYAUTOGUI_AVAILABLE:
+                pyautogui.press('space')
+        except:
+            pass
+        return True
+
+    def launch_pubg_game(self):
+        """
+        启动 PUBB 游戏
+
+        Returns:
+            bool: 启动是否成功
+        """
+        print("\n🎮 启动 PUBG 游戏...")
+
+        try:
+            # 确保 Steam 完全准备好
+            time.sleep(2)
+
+            # 方法1：使用 Steam -applaunch 参数（更可靠）
+            print("📍 使用 Steam -applaunch 启动游戏...")
+            cmd = [self.STEAM_EXE_PATH, "-applaunch", self.PUBG_APP_ID]
+
+            subprocess.Popen(cmd, shell=False)
+            print(f"   执行: steam.exe -applaunch {self.PUBG_APP_ID}")
+
+            # 等待游戏启动并验证进程
+            print("⏳ 等待游戏启动...")
+
+            # 阶段1：等待用户许可协议窗口出现
+            print("💡 阶段1: 等待用户许可协议窗口...")
+            time.sleep(5)
+
+            # 尝试多次发送回车键来同意协议
+            max_agree_attempts = 12  # 增加到12次
+            for i in range(max_agree_attempts):
+                print(f"   尝试点击同意 ({i+1}/{max_agree_attempts})...")
+
+                # 多次尝试激活和点击
+                self.activate_and_send_enter()
+
+                # 等待更长时间让游戏启动（增加到5秒）
+                time.sleep(5)
+
+                # 检查游戏是否已启动
+                if self.check_process_running("TslGame.exe"):
+                    print(f"✅ 检测到游戏已启动（协议可能已同意）")
+                    # 尝试激活游戏窗口
+                    print("💡 尝试激活游戏窗口...")
+                    time.sleep(2)
+                    for keyword in ["PUBG", "BATTLEGROUNDS", "TslGame"]:
+                        if self.activate_window_by_title(keyword):
+                            print(f"   ✅ 已激活 PUBG 游戏窗口")
+                            break
+                    return True
+
+                # 如果尝试了5次都没成功，给出提示但不阻塞
+                if i == 4:
+                    print("\n⚠️  已尝试5次仍未检测到游戏启动")
+                    print("💡 脚本将继续尝试...")
+                    print("💡 提示：请确认用户许可协议窗口是否在屏幕上")
+                    time.sleep(2)
+
+            # 阶段2：如果协议点击后仍未启动，继续等待
+            print("💡 阶段2: 继续等待游戏进程启动...")
+
+            # 最多等待 50 秒让游戏启动
+            max_wait = 50
+            game_started = False
+
+            for i in range(max_wait):
+                if self.check_process_running("TslGame.exe"):
+                    game_started = True
+                    print(f"✅ PUBG 游戏已启动 (TslGame.exe 检测到，总耗时 {i+1} 秒)")
+                    # 尝试激活游戏窗口
+                    print("💡 尝试激活游戏窗口...")
+                    for keyword in ["PUBG", "BATTLEGROUNDS", "TslGame"]:
+                        if self.activate_window_by_title(keyword):
+                            print(f"   ✅ 已激活 PUBG 游戏窗口")
+                            break
+                    break
+                time.sleep(1)
+
+                # 每5秒显示一次进度
+                if (i + 1) % 5 == 0:
+                    print(f"   等待中... ({i+1}/{max_wait}秒)")
+
+            if not game_started:
+                print("⚠️  未检测到 TslGame.exe 进程，游戏可能未成功启动")
+                print("💡 可能原因：")
+                print("   - Steam 未完全登录")
+                print("   - 该账号未安装 PUBG 游戏")
+                print("   - 用户许可协议未同意（需要手动点击）")
+                print("   - 游戏启动时间过长")
+                print("   - Steam 客户端需要更新")
+                print("\n🔍 调试信息:")
+                self.list_game_processes()
+                print(f"\n⚠️  跳过此账号，继续下一个...")
+                time.sleep(2)
+                return False
+
+            return True
+
+        except Exception as e:
+            print(f"⚠️  启动 PUBG 失败: {e}")
+            return False
+
+    def close_pubg_game(self):
+        """关闭 PUBG 游戏进程"""
+        print("🎮 关闭 PUBG 游戏...")
+
+        try:
+            # 尝试多种方式关闭游戏
+            kill_methods = [
+                "taskkill /F /IM TslGame.exe",
+                "taskkill /F /IM BEService.exe"
+            ]
+
+            for cmd in kill_methods:
+                try:
+                    subprocess.run(f"{cmd} >nul 2>&1", shell=True)
+                    time.sleep(0.5)
+                except:
+                    pass
+
+            # 等待进程完全关闭
+            time.sleep(2)
+
+            # 验证游戏进程是否已关闭
+            if self.check_process_running("TslGame.exe"):
+                print("⚠️  TslGame.exe 进程仍在运行，尝试强制关闭...")
+                subprocess.run("taskkill /F /IM TslGame.exe >nul 2>&1", shell=True)
+                time.sleep(2)
+
+            if not self.check_process_running("TslGame.exe"):
+                print("✅ PUBG 游戏已关闭")
+            else:
+                print("⚠️  游戏进程可能仍在运行")
+
+        except Exception as e:
+            print(f"⚠️  关闭游戏时出错: {e}")
+
+    def close_steam_client(self):
+        """彻底关闭 Steam 客户端"""
+        print("🚪 正在关闭 Steam 客户端...")
+
+        try:
+            # 方法1：先尝试用 Steam 的 shutdown 命令（优雅关闭）
+            try:
+                print("   💡 尝试优雅关闭 Steam...")
+                subprocess.run([self.STEAM_EXE_PATH, "-shutdown"], capture_output=True, timeout=10)
+                time.sleep(3)
+            except:
+                pass
+
+            # 方法2：强制关闭所有 Steam 相关进程
+            print("   💡 强制关闭所有 Steam 进程...")
+            steam_processes = [
+                "steam.exe",
+                "steamwebhelper.exe",
+                "gameoverlayui.exe",
+                "steamservice.exe",
+                "Steam.exe",
+                "SteamWebHelper.exe"
+            ]
+
+            for proc in steam_processes:
+                subprocess.run(f"taskkill /F /IM {proc} >nul 2>&1", shell=True)
+
+            # 方法3：等待并验证所有进程都已关闭
+            print("   💡 等待 Steam 完全退出...")
+            max_wait = 15
+            for i in range(max_wait):
+                time.sleep(1)
+                if not self.check_process_running("steam.exe") and \
+                   not self.check_process_running("steamwebhelper.exe"):
+                    print(f"   ✅ Steam 已完全关闭（耗时 {i+1} 秒）")
+                    return True
+
+                if (i + 1) % 5 == 0:
+                    print(f"   ⏳ 等待 Steam 退出... ({i+1}/{max_wait}秒)")
+
+            # 如果还在运行，再次强制关闭
+            print("   ⚠️  Steam 仍在运行，进行最后一次强制关闭...")
+            for proc in steam_processes:
+                subprocess.run(f"taskkill /F /IM {proc} >nul 2>&1", shell=True)
+            time.sleep(3)
+
+            # 最终验证
+            if not self.check_process_running("steam.exe"):
+                print("   ✅ Steam 已强制关闭")
+            else:
+                print("   ⚠️  Steam 可能未完全关闭，将继续尝试清理")
+
+        except Exception as e:
+            print(f"⚠️  关闭 Steam 时出错: {e}")
+
+        # 确保等待足够时间让 Steam 完全退出
+        time.sleep(2)
+
+    def visit_pubg_page(self, account):
+        """
+        完整的 PUBG 游戏流程
+
+        Args:
+            account: 账号信息字典
+
+        Returns:
+            bool: 流程是否成功
+        """
+        print("\n" + "="*50)
+        print("🎮 开始 PUBG 游戏流程")
+        print("="*50)
+
+        try:
+            # 1. 关闭所有进程
+            self.kill_all_processes()
+
+            # 2. Steam 客户端登录
+            if not self.steam_login(account['username'], account['password']):
+                print("⚠️  Steam 登录失败，清理环境...")
+                self.kill_all_processes()
+                return False
+
+            # 3. 启动 PUBG 游戏
+            if not self.launch_pubg_game():
+                print("⚠️  PUBG 启动失败，清理环境...")
+                self.kill_all_processes()
+                return False
+
+            # 4. 等待游戏运行（90秒）
+            game_time = 90  # 90秒
+            print(f"\n⏳ 游戏运行中 ({game_time} 秒)...")
+            print("💡 提示：游戏窗口应该已经显示在屏幕上")
+
+            # 每30秒显示一次进度
+            for elapsed in range(0, game_time, 30):
+                remaining = game_time - elapsed
+                print(f"   ⏱️  剩余时间: {remaining} 秒")
+                time.sleep(30)
+
+            print("   ✅ 游戏运行时间结束")
+
+            # 5. 关闭 PUBG 游戏
+            self.close_pubg_game()
+
+            # 6. 关闭 Steam 客户端
+            self.close_steam_client()
+
+            print("\n✅ PUBG 流程完成")
+            return True
+
+        except Exception as e:
+            print(f"\n⚠️  PUBG 流程出错: {e}")
+            print("⚠️  清理环境...")
+            self.kill_all_processes()
+            return False
+
+
     def logout_steam(self):
         """
         退出 Steam 登录（完全清除浏览器状态）
@@ -400,16 +1018,16 @@ class SteamLoginBatch:
 
                 print(f"\n📋 进度: [{i}/{total}]")
 
-                # 登录
-                if self.login_steam(account):
-                    print(f"✅ 账号 {account['username']} 登录成功")
+                # 直接使用 Steam 客户端登录并启动游戏
+                print(f"\n📋 处理账号: {account['username']}")
 
-                    # 立即退出，无需等待
-                    self.logout_steam()
-                else:
-                    interval = 1
-                    print(f"⏳ 等待 {interval} 秒后处理下一个账号...")
-                    time.sleep(interval)
+                # 执行完整的 PUBG 流程
+                self.visit_pubg_page(account)
+
+                # 账号间间隔
+                interval = 2
+                print(f"\n⏳ �待 {interval} 秒后处理下一个账号...")
+                time.sleep(interval)
 
             print("\n" + "="*60)
             print(f"✅ 所有账号处理完成！共处理 {total} 个账号")

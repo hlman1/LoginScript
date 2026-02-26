@@ -186,4 +186,154 @@ python src\login_steam.py
 
 ---
 
-*最后更新: 2026-02-13*
+## 2026-02-26 对话记录 - v2.0 重大更新
+
+### 用户需求更新
+用户希望实现更完整的功能：
+- 登录 Steam 后启动 PUBG 游戏
+- 游戏运行一段时间后退出
+- 切换到下一个账号
+
+### 开发过程
+
+#### 阶段1：从浏览器登录切换到 Steam 客户端登录
+
+**问题**：原有的 Playwright 浏览器登录方式无法启动游戏客户端
+
+**解决方案**：
+- 改用 Steam 命令行登录：`steam.exe -login <username> <password>`
+- 使用 Steam 协议启动游戏：`steam.exe -applaunch <APP_ID>`
+
+**技术要点**：
+- 使用 `subprocess.Popen()` 启动 Steam
+- 进程检测验证（`tasklist` 命令）
+- 等待 Steam 完全准备就绪
+
+#### 阶段2：PUBG 游戏启动实现
+
+**实现方法**：
+```python
+cmd = [self.STEAM_EXE_PATH, "-applaunch", self.PUBG_APP_ID]
+subprocess.Popen(cmd, shell=False)
+```
+
+**验证方式**：
+- 检测 `TslGame.exe` 进程
+- 激活游戏窗口到前台
+
+#### 阶段3：用户许可协议处理（最大挑战）
+
+**问题1**：第二个账号有用户许可协议窗口，脚本无法处理
+
+**用户反馈**：
+- "这个用户许可协议只有两个选项，一个是接受，一个是取消，点击一下接收就行"
+- "脚本一直无法实现，我猜测这个是不能通过回车和空格来接收的，考虑一下其他方法"
+
+**解决过程**：
+
+1. **尝试 Tab + Space** - 失败
+2. **鼠标点击屏幕右侧** - 失败，点击了错误的位置
+3. **用户反馈**："账号2还是没有实现，最后是停留在别的页面了，可能点击的位置错误了"
+
+**关键发现**：
+- 中文 Windows 对话框中，"接受/确定"按钮在**左侧**
+- "取消"按钮在**右侧**
+- 原代码点击右侧，实际点击了"取消"
+
+**最终解决方案**：
+- 修改点击位置为屏幕左侧
+- 多种方法组合：Tab+Space → 左侧鼠标点击 → Alt+Y → 回车键
+- 回车键最终成功处理协议
+
+#### 阶段4：账号切换问题（关键修复）
+
+**问题**：
+- 第一个账号退出后，又重新登录了第一个账号
+- 第二个账号完成后，又启动了第一个账号的游戏
+
+**用户反馈**：
+"第一个账户退出游戏界面，再退出steam客户端，又重新登录了这个账户的steam客户端；然后再重新登录为另一个账号的steam的客户端，登录游戏；但是退出有限界面后，又重新登录了这个账户的steam客户端，还启动了游戏"
+
+**原因分析**：
+- Steam 客户端关闭不彻底
+- 有残留进程保留了登录状态
+- 下次启动时使用了旧的登录信息
+
+**解决方案**：
+
+1. **登录前清理**：
+```python
+def steam_login(self, username, password):
+    # 检查并清理残留的 Steam 进程
+    if self.check_process_running("steam.exe"):
+        self.kill_all_processes()
+        time.sleep(3)
+```
+
+2. **彻底关闭 Steam**：
+```python
+def close_steam_client(self):
+    # 方法1：优雅关闭
+    subprocess.run([self.STEAM_EXE_PATH, "-shutdown"], ...)
+
+    # 方法2：强制关闭所有进程
+    for proc in steam_processes:
+        subprocess.run(f"taskkill /F /IM {proc} ...")
+
+    # 方法3：等待并验证
+    for i in range(15):
+        if not self.check_process_running("steam.exe"):
+            return True
+```
+
+3. **增强进程清理**：
+- 两次关闭尝试
+- 验证关键进程是否已关闭
+- 针对顽固进程的额外处理
+
+#### 阶段5：完善和测试
+
+**用户需求**：
+- "第一个账号成功启动了，但是我感觉在游戏页面停留得有点久，时间设置为90s吧"
+
+**实现**：
+```python
+game_time = 90  # 90秒
+```
+
+**最终测试结果**：
+- 账号1 (ta3az7wf4vg3)：✅ 完全成功
+- 账号2 (rex78532)：✅ 完全成功
+
+### 技术总结
+
+**核心改动**：
+1. 从 Playwright 浏览器自动化 → Steam CLI
+2. 新增 PUBG 游戏启动功能
+3. 新增用户许可协议处理
+4. 新增游戏窗口激活
+5. 完善进程管理和清理
+
+**依赖变更**：
+- 移除：playwright
+- 新增：pyautogui, pillow
+
+**新增文件**：
+- `src/test_login_one.py` - 单账号测试脚本
+
+**修改文件**：
+- `src/login_steam.py` - 主要功能实现
+
+### 遇到的问题和解决方案
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| 游戏窗口不显示 | 窗口在后台 | PowerShell 激活窗口 |
+| 游戏运行时间长 | 默认120秒 | 改为90秒 |
+| 许可协议无法处理 | 点击位置错误 | 改为点击左侧 + 多种方法 |
+| 账号混淆 | Steam关闭不彻底 | 登录前清理 + 优雅关闭 + 验证 |
+| 代码typo | `PYAUTOGOGUI_AVAILABLE` | 修正为 `PYAUTOGUI_AVAILABLE` |
+
+---
+
+*最后更新: 2026-02-26*
