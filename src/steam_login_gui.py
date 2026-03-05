@@ -529,16 +529,12 @@ class SteamLoginGUI:
             ttk.Label(info_frame, text=display_value).grid(
                 row=row, column=1, sticky='w', padx=5, pady=8)
 
-        # 提示信息
-        ttk.Label(info_frame, text="💡 提示：双击列表中的账号也可查看详情",
-                 foreground="gray").grid(row=len(fields), column=0, columnspan=2, pady=10)
-
         # 按钮区域
         btn_frame = ttk.Frame(info_frame)
-        btn_frame.grid(row=len(fields), column=0, columnspan=2, pady=10)
+        btn_frame.grid(row=len(fields), column=0, columnspan=2, pady=20)
 
-        ttk.Button(btn_frame, text="✏️ 编辑账号", command=lambda: self.edit_account(index)).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="关闭", command=dialog.destroy).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="编辑账号", command=lambda: self.edit_account(index), width=15).pack(side='left', padx=5)
+        ttk.Label(btn_frame, text="(双击列表项可查看详情)", foreground="gray").pack(side='left', padx=5)
 
     def edit_account(self, index):
         """编辑账号信息"""
