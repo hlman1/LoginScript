@@ -368,6 +368,9 @@ class SteamLoginGUI:
         if not self.accounts_file.exists():
             self.accounts_listbox.insert(tk.END, "（暂无账号，请添加）")
             self.update_stats()
+
+            # 绑定双击事件查看账号详情
+            self.accounts_listbox.bind('<Double-Button-1>', self.show_account_detail)
             return
 
         try:
@@ -380,9 +383,21 @@ class SteamLoginGUI:
                             username = parts[0]
                             self.accounts_listbox.insert(tk.END, f"账号：{username}")
                             # 保存行号，用于删除
-                            self.accounts_data.append({'line_num': line_num, 'username': username, 'line': line})
+                            # 保存完整的账号信息，用于查看和删除
+                            self.accounts_data.append({
+                                'line_num': line_num,
+                                'username': username,
+                                'password': parts[1] if len(parts) > 1 else '',
+                                'email': parts[2] if len(parts) > 2 else '',
+                                'email_password': parts[3] if len(parts) > 3 else '',
+                                'email_url': parts[4] if len(parts) > 4 else '',
+                                'line': line
+                            })
 
             self.update_stats()
+
+            # 绑定双击事件查看账号详情
+            self.accounts_listbox.bind('<Double-Button-1>', self.show_account_detail)
         except Exception as e:
             self.accounts_listbox.insert(tk.END, f"❌ 读取失败：{e}")
             messagebox.showerror("错误", f"读取账号文件失败：{e}\n\n文件路径：{self.accounts_file}")
@@ -461,6 +476,66 @@ class SteamLoginGUI:
                     messagebox.showerror("错误", "导入失败，请查看日志")
             except Exception as e:
                 messagebox.showerror("错误", f"导入失败：{e}")
+
+
+    def show_account_detail(self, event=None):
+        """显示账号详情"""
+        selection = self.accounts_listbox.curselection()
+        if not selection:
+            return
+
+        index = selection[0]
+        if index >= len(self.accounts_data):
+            return
+
+        account = self.accounts_data[index]
+
+        # 创建详情对话框
+        dialog = tk.Toplevel(self.root)
+        dialog.title("账号详情")
+        dialog.geometry("500x320")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # 账号信息
+        info_frame = ttk.Frame(dialog, padding=20)
+        info_frame.pack(fill='both', expand=True)
+
+        # 显示字段
+        fields = [
+            ("Steam 账号：", account['username']),
+            ("Steam 密码：", account['password']),
+            ("邮箱账号：", account['email']),
+            ("邮箱密码：", account['email_password']),
+            ("邮箱地址：", account['email_url'])
+        ]
+
+        for row, (label, value) in enumerate(fields):
+            ttk.Label(info_frame, text=label, font=("Arial", 10, "bold")).grid(
+                row=row, column=0, sticky='w', padx=5, pady=8)
+
+            # 密码字段用星号显示
+            if '密码' in label and value:
+                display_value = '*' * len(value)
+            elif not value:
+                display_value = '(未设置)'
+            else:
+                display_value = value
+
+            # 邮箱地址截断显示
+            if '邮箱地址' in label and len(value) > 30:
+                display_value = value[:30] + '...'
+
+            ttk.Label(info_frame, text=display_value).grid(
+                row=row, column=1, sticky='w', padx=5, pady=8)
+
+        # 提示信息
+        ttk.Label(info_frame, text="💡 提示：双击列表中的账号也可查看详情",
+                 foreground="gray").grid(row=len(fields), column=0, columnspan=2, pady=10)
+
+        # 关闭按钮
+        ttk.Button(dialog, text="关闭", command=dialog.destroy).grid(
+            row=len(fields)+1, column=0, columnspan=2, pady=10)
 
     def delete_account(self):
         """删除选中的账号"""
