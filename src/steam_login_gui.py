@@ -533,9 +533,83 @@ class SteamLoginGUI:
         ttk.Label(info_frame, text="💡 提示：双击列表中的账号也可查看详情",
                  foreground="gray").grid(row=len(fields), column=0, columnspan=2, pady=10)
 
-        # 关闭按钮
-        ttk.Button(dialog, text="关闭", command=dialog.destroy).grid(
-            row=len(fields)+1, column=0, columnspan=2, pady=10)
+        # 按钮区域
+        btn_frame = ttk.Frame(info_frame)
+        btn_frame.grid(row=len(fields), column=0, columnspan=2, pady=10)
+
+        ttk.Button(btn_frame, text="✏️ 编辑账号", command=lambda: self.edit_account(index)).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="关闭", command=dialog.destroy).pack(side='left', padx=5)
+
+    def edit_account(self, index):
+        """编辑账号信息"""
+        if index >= len(self.accounts_data):
+            return
+
+        account = self.accounts_data[index]
+
+        # 创建编辑对话框
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"编辑账号 - {account['username']}")
+        dialog.geometry("500x380")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # 字段
+        fields = [
+            ("Steam 账号：", "username"),
+            ("Steam 密码：", "password"),
+            ("邮箱账号：", "email"),
+            ("邮箱密码：", "email_password"),
+            ("邮箱地址：", "email_url")
+        ]
+
+        entries = {}
+        for i, (label, key) in enumerate(fields):
+            ttk.Label(dialog, text=label).grid(row=i, column=0, padx=10, pady=10, sticky='e')
+            entry = ttk.Entry(dialog, width=35)
+            entry.grid(row=i, column=1, padx=10, pady=10)
+            entry.insert(0, account.get(key, ''))
+            entries[key] = entry
+
+        def save_edit():
+            # 获取新值
+            new_values = []
+            for key in ["username", "password", "email", "email_password", "email_url"]:
+                value = entries[key].get().strip()
+                if not value and key in ["username", "password"]:
+                    messagebox.showwarning("警告", "账号和密码不能为空")
+                    return
+                new_values.append(value if value else "")
+
+            try:
+                # 读取所有行
+                with open(self.accounts_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+
+                # 替换指定行
+                line_num = account['line_num']
+                if 1 <= line_num <= len(lines):
+                    lines[line_num - 1] = '\t'.join(new_values) + '\n'
+
+                # 写回文件
+                with open(self.accounts_file, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+
+                self.refresh_accounts_list()
+                dialog.destroy()
+                messagebox.showinfo("成功", "账号信息已更新！")
+            except Exception as e:
+                messagebox.showerror("错误", f"保存失败：{e}")
+
+        def cancel_edit():
+            dialog.destroy()
+
+        # 按钮区域
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=20)
+
+        ttk.Button(btn_frame, text="保存", command=save_edit).pack(side='left', padx=10)
+        ttk.Button(btn_frame, text="取消", command=cancel_edit).pack(side='left', padx=10)
 
     def delete_account(self):
         """删除选中的账号"""
