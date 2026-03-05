@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Steam 批量登录工具 - 图形化界面版本
+Steam 批量登录工具 - 图形化界面版本（修复版）
 功能：一键完成环境检查、配置、账号管理和登录
 """
 
@@ -13,7 +13,6 @@ import os
 import json
 import threading
 from pathlib import Path
-import time
 
 # 修复 Windows 控制台编码问题
 if sys.platform == 'win32':
@@ -31,13 +30,25 @@ class SteamLoginGUI:
         self.root.geometry("700x650")
         self.root.resizable(False, False)
 
-        # 配置文件路径
-        self.config_file = Path(__file__).parent.parent / "config.json"
-        self.accounts_file = Path(__file__).parent.parent / "accounts.txt"
-        self.login_script = Path(__file__).parent / "login_steam.py"
+        # 获取项目根目录（兼容从任意位置启动）
+        if getattr(sys, 'frozen', False):
+            # 打包后的 exe
+            self.project_root = Path(sys.executable).parent
+        else:
+            # Python 脚本
+            self.project_root = Path(__file__).parent.parent
+
+        # 配置文件路径（使用绝对路径）
+        self.config_file = self.project_root / "config.json"
+        self.accounts_file = self.project_root / "accounts.txt"
+        self.login_script = self.project_root / "src" / "login_steam.py"
+        self.convert_script = self.project_root / "src" / "chinese_to_tab.py"
 
         # 加载配置
         self.config = self.load_config()
+
+        # 账号列表数据（用于删除）
+        self.accounts_data = []
 
         # 创建界面
         self.create_widgets()
@@ -272,33 +283,50 @@ class SteamLoginGUI:
 
     def install_dependencies(self):
         """安装依赖"""
+        self.env_log.delete(1.0, tk.END)
         self.log_message("开始安装依赖...\n")
 
         def install():
             try:
                 # 升级 pip
                 self.log_message("正在升级 pip...\n")
-                subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"],
-                             capture_output=True)
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--upgrade", "pip"],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    self.log_message("✓ pip 升级成功\n")
+                else:
+                    self.log_message(f"⚠ pip 升级: {result.stderr}\n")
 
                 # 安装 pyautogui
                 self.log_message("正在安装 pyautogui...\n")
-                result = subprocess.run([sys.executable, "-m", "pip", "install", "pyautogui"],
-                                      capture_output=True, text=True)
-                self.log_message(result.stdout)
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "pyautogui"],
+                    capture_output=True, text=True
+                )
+                if "Successfully installed" in result.stdout or "Requirement already satisfied" in result.stdout:
+                    self.log_message("✓ pyautogui 安装成功\n")
+                else:
+                    self.log_message(f"✗ pyautogui 安装失败: {result.stderr}\n")
 
                 # 安装 pillow
                 self.log_message("正在安装 pillow...\n")
-                result = subprocess.run([sys.executable, "-m", "pip", "install", "pillow"],
-                                      capture_output=True, text=True)
-                self.log_message(result.stdout)
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "pillow"],
+                    capture_output=True, text=True
+                )
+                if "Successfully installed" in result.stdout or "Requirement already satisfied" in result.stdout:
+                    self.log_message("✓ pillow 安装成功\n")
+                else:
+                    self.log_message(f"✗ pillow 安装失败: {result.stderr}\n")
 
                 self.log_message("\n✅ 依赖安装完成！\n")
                 self.check_environment()
-                messagebox.showinfo("完成", "依赖安装完成！")
+                self.root.after(0, lambda: messagebox.showinfo("完成", "依赖安装完成！"))
             except Exception as e:
                 self.log_message(f"\n❌ 安装失败：{e}\n")
-                messagebox.showerror("错误", f"安装失败：{e}")
+                self.root.after(0, lambda: messagebox.showerror("错误", f"安装失败：{e}"))
 
         threading.Thread(target=install, daemon=True).start()
 
@@ -335,24 +363,29 @@ class SteamLoginGUI:
     def refresh_accounts_list(self):
         """刷新账号列表"""
         self.accounts_listbox.delete(0, tk.END)
+        self.accounts_data = []
 
         if not self.accounts_file.exists():
             self.accounts_listbox.insert(tk.END, "（暂无账号，请添加）")
+            self.update_stats()
             return
 
         try:
             with open(self.accounts_file, 'r', encoding='utf-8') as f:
-                for line in f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if line and not line.startswith('#'):
                         parts = line.split('\t')
                         if len(parts) >= 2:
                             username = parts[0]
                             self.accounts_listbox.insert(tk.END, f"账号：{username}")
+                            # 保存行号，用于删除
+                            self.accounts_data.append({'line_num': line_num, 'username': username, 'line': line})
 
             self.update_stats()
         except Exception as e:
-            messagebox.showerror("错误", f"读取账号文件失败：{e}")
+            self.accounts_listbox.insert(tk.END, f"❌ 读取失败：{e}")
+            messagebox.showerror("错误", f"读取账号文件失败：{e}\n\n文件路径：{self.accounts_file}")
 
     def add_account_dialog(self):
         """添加账号对话框"""
@@ -410,10 +443,13 @@ class SteamLoginGUI:
         if filename:
             # 调用转换脚本
             try:
+                self.log_message(f"正在导入文件：{filename}\n")
                 result = subprocess.run(
-                    [sys.executable, str(Path(__file__).parent / "chinese_to_tab.py"), filename],
+                    [sys.executable, str(self.convert_script), filename],
                     capture_output=True,
-                    text=True
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace'
                 )
 
                 self.log_message(result.stdout)
@@ -421,6 +457,7 @@ class SteamLoginGUI:
                     self.refresh_accounts_list()
                     messagebox.showinfo("成功", "账号导入成功！")
                 else:
+                    self.log_message(f"错误：{result.stderr}\n")
                     messagebox.showerror("错误", "导入失败，请查看日志")
             except Exception as e:
                 messagebox.showerror("错误", f"导入失败：{e}")
@@ -432,21 +469,50 @@ class SteamLoginGUI:
             messagebox.showwarning("警告", "请先选择要删除的账号")
             return
 
-        if messagebox.askyesno("确认", "确定要删除选中的账号吗？"):
-            # 这里简化处理，直接清空文件重新添加
-            messagebox.showinfo("提示", "请手动编辑 accounts.txt 文件删除账号")
+        if len(self.accounts_data) == 0:
+            messagebox.showwarning("警告", "没有可删除的账号")
+            return
+
+        index = selection[0]
+        if index >= len(self.accounts_data):
+            messagebox.showwarning("警告", "选择的账号无效")
+            return
+
+        account_info = self.accounts_data[index]
+
+        if messagebox.askyesno("确认删除", f"确定要删除账号 '{account_info['username']}' 吗？"):
+            try:
+                # 读取所有行
+                with open(self.accounts_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+
+                # 删除指定行（行号从1开始）
+                line_num = account_info['line_num']
+                if 1 <= line_num <= len(lines):
+                    del lines[line_num - 1]
+
+                # 写回文件
+                with open(self.accounts_file, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+
+                self.refresh_accounts_list()
+                messagebox.showinfo("成功", "账号删除成功！")
+            except Exception as e:
+                messagebox.showerror("错误", f"删除失败：{e}")
 
     def update_stats(self):
         """更新统计信息"""
-        count = self.accounts_listbox.size()
-        if count > 0 and self.accounts_listbox.get(0) == "（暂无账号，请添加）":
-            count = 0
+        count = len(self.accounts_data)
         self.account_count_label.config(text=f"账号数量：{count}")
 
     def start_login(self):
         """开始登录"""
         if not self.login_script.exists():
-            messagebox.showerror("错误", "找不到登录脚本")
+            messagebox.showerror("错误", f"找不到登录脚本：\n{self.login_script}")
+            return
+
+        if len(self.accounts_data) == 0:
+            messagebox.showwarning("警告", "请先添加账号")
             return
 
         # 更新配置到脚本
@@ -459,13 +525,17 @@ class SteamLoginGUI:
 
         def run_login():
             try:
+                self.log_message(f"启动登录脚本：{self.login_script}\n")
+                self.log_message(f"项目根目录：{self.project_root}\n\n")
+
                 process = subprocess.Popen(
                     [sys.executable, str(self.login_script)],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
                     encoding='utf-8',
-                    errors='replace'
+                    errors='replace',
+                    cwd=str(self.project_root)  # 设置工作目录
                 )
 
                 for line in process.stdout:
@@ -474,10 +544,10 @@ class SteamLoginGUI:
                 process.wait()
                 self.progress_var.set(100)
                 self.status_label.config(text="✅ 完成")
-                messagebox.showinfo("完成", "所有账号处理完成！")
+                self.root.after(0, lambda: messagebox.showinfo("完成", "所有账号处理完成！"))
             except Exception as e:
                 self.log_message(f"错误：{e}\n")
-                messagebox.showerror("错误", f"运行失败：{e}")
+                self.root.after(0, lambda: messagebox.showerror("错误", f"运行失败：{e}"))
             finally:
                 self.start_btn.config(state='normal')
                 self.stop_btn.config(state='disabled')
@@ -486,22 +556,51 @@ class SteamLoginGUI:
 
     def stop_login(self):
         """停止登录"""
-        # 这里需要实现停止逻辑
-        messagebox.showinfo("提示", "请手动关闭 Steam 窗口停止")
+        # 提示用户手动停止
+        response = messagebox.askyesno("停止", "是否要停止登录？\n\n提示：可以手动关闭 Steam 窗口来停止")
+        if response:
+            self.start_btn.config(state='normal')
+            self.stop_btn.config(state='disabled')
+            self.status_label.config(text="⏹️ 已停止")
 
     def update_login_script_config(self):
         """更新登录脚本的配置"""
-        # 这里可以动态修改 login_steam.py 的配置
-        # 为了简化，暂时省略
-        pass
+        try:
+            # 读取登录脚本
+            with open(self.login_script, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # 替换 Steam 路径
+            steam_path = self.steam_path_var.get()
+            import re
+            content = re.sub(
+                r'STEAM_EXE_PATH = r".*?"',
+                f'STEAM_EXE_PATH = r"{steam_path}"',
+                content
+            )
+
+            # 写回
+            with open(self.login_script, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            self.log_message(f"已更新 Steam 路径：{steam_path}\n")
+        except Exception as e:
+            self.log_message(f"更新配置失败：{e}\n")
 
     def log_message(self, message):
         """记录日志"""
-        self.env_log.insert(tk.END, message)
-        self.env_log.see(tk.END)
+        def _log():
+            self.env_log.insert(tk.END, message)
+            self.env_log.see(tk.END)
 
-        self.run_log.insert(tk.END, message)
-        self.run_log.see(tk.END)
+            self.run_log.insert(tk.END, message)
+            self.run_log.see(tk.END)
+
+        # 如果在主线程，直接调用；否则使用 after
+        if threading.current_thread() is threading.main_thread():
+            _log()
+        else:
+            self.root.after(0, _log)
 
 
 def main():
