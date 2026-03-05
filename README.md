@@ -65,8 +65,13 @@ python --version
 ### 第二步：安装依赖
 
 **1. 打开项目文件夹**
+
 ```bash
+# 根据你的实际安装路径修改下面这行
 cd D:\vscode\LoginScript
+
+# 例如，如果你的项目在桌面：
+# cd C:\Users\你的用户名\Desktop\LoginScript
 ```
 
 **2. 安装必要的库**
@@ -75,6 +80,26 @@ pip install pyautogui pillow
 ```
 
 **等待安装完成**（大概 1-2 分钟）
+- 看到很多行文字滚动是正常的
+- 看到 `Successfully installed...` 就好了
+
+❌ **如果安装失败？**
+
+方法1：升级 pip 后重试
+```bash
+python -m pip install --upgrade pip
+pip install pyautogui pillow
+```
+
+方法2：使用国内镜像源（更快）
+```bash
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pyautogui pillow
+```
+
+方法3：使用阿里云镜像
+```bash
+pip install -i https://mirrors.aliyun.com/pypi/simple/ pyautogui pillow
+```
 
 ---
 
@@ -90,6 +115,26 @@ PUBG_APP_ID = "578080"
 **如果你的 Steam 安装路径不同，请修改**：
 - `STEAM_EXE_PATH` - 你的 Steam.exe 完整路径
 - 例如：`r"C:\Program Files (x86)\Steam\Steam.exe"`
+
+🔍 **如何找到你的 Steam 路径**：
+
+**方法1：通过 Steam 图标**
+1. 右键桌面上的 Steam 图标
+2. 选择"打开文件所在的位置"
+3. 在地址栏复制完整路径
+4. 路径格式类似：`C:\Program Files (x86)\Steam\Steam.exe`
+
+**方法2：通过任务管理器**
+1. 按 `Ctrl + Shift + Esc` 打开任务管理器
+2. 找到"Steam"进程
+3. 右键 → "打开文件所在的位置"
+4. 复制 Steam.exe 的完整路径
+
+**方法3：常见默认路径**
+- `C:\Program Files (x86)\Steam\Steam.exe`
+- `C:\Program Files\Steam\Steam.exe`
+- `D:\Steam\Steam.exe`
+- `E:\Steam\Steam.exe`
 
 ---
 
@@ -169,6 +214,9 @@ python src\config_accounts.py
 ---
 
 ## 🎬 运行脚本
+
+💡 **第一次使用建议**：
+> 先在 `accounts.txt` 中只添加**一个账号**进行测试，确认一切正常后再添加更多账号。这样更容易发现问题。
 
 **运行命令**：
 ```bash
