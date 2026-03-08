@@ -1,8 +1,9 @@
-# Steam 账号批量登录脚本 - 依赖库
+# Steam Batch Login Tool - Dependencies
 
-# Playwright - 浏览器自动化框架
-playwright==1.48.0
+# GUI and automation
+pyautogui>=0.9.54
+pillow>=10.0.0
+opencv-python>=4.8.0  # Required for image recognition with confidence
 
-# Python 版本要求: Python 3.8+
-
-# 运行命令: python src/login_steam.py
+# Python version requirement: Python 3.8+
+pywin32>=306

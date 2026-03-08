@@ -337,3 +337,227 @@ game_time = 90  # 90秒
 ---
 
 *最后更新: 2026-02-26*
+
+
+---
+
+## 2026-03-06 对话记录 - OpenCV 图像识别集成
+
+### 用户需求更新
+
+1. **协议窗口智能检测**：
+   - "还有一点我要和你明确一下。当代码启动pubg的时候，要检查一下当前是否有"最终用户协议"的页面，如果有这个页面的话，就点击"接受"按钮。因为这个页面不一定会出现的"
+
+2. **高置信度点击**：
+   - "然后点击"接受"按钮的动作，我感觉必须是图像识别"接受"按钮置信度大于比如说95这样"
+
+3. **位置无关识别**：
+   - "这些位置中按钮的位置确实不同，但是你必须得具备识别不同位置按钮的功能"
+
+4. **项目文件整理**：
+   - "你修改吧。同时这个项目文件中，有太多文件里。你整理一下。"
+
+### 开发过程
+
+#### 阶段1: pyautogui 测试失败
+
+**测试结果**：
+- 使用 `pyautogui.locateOnScreen()` 测试 3 张图片
+- 成功率：0% (0/3)
+- 问题：pyautogui 算法精度不够
+
+#### 阶段2: OpenCV 高精度识别
+
+**实现**：
+- 创建 `test_enhanced_recognition.py` 测试脚本
+- 使用 `cv2.matchTemplate()` with `TM_CCORR_NORMED`
+- 测试结果：100% 成功率 (3/3)
+- 相似度：99.09%, 99.05%, 99.10%
+
+#### 阶段3: 集成到主脚本
+
+**修改的文件**：
+1. **`src/login_steam.py`**:
+   - 替换 `activate_and_click_accept()` 方法，使用 OpenCV
+   - 替换 `check_for_agreement_window()` 方法，使用 OpenCV
+   - 添加 `self.project_root` 属性
+   - 修复 `main()` 函数，使用 `visit_pubg_page()` 而不是旧的 `run()`
+   - 修复 `self.PYAUTOGUI_AVAILABLE` → `PYAUTOGUI_AVAILABLE`
+   - 简化 `wait_for_steam_ready()` 检测逻辑
+
+2. **`src/steam_login_gui.py`**:
+   - 更新到 v2.2
+   - 添加 opencv-python 环境检查
+   - 添加 accept_button.png 模板检查
+
+3. **创建 `config.json`**:
+   - Steam 路径配置
+   - 游戏时间配置 (90秒)
+
+#### 阶段4: 项目文件清理
+
+**删除的文件** (12+ 个冗余文件):
+- check_agreement.py
+- fix_click_confidence.py
+- new_activate_and_click_accept.txt
+- test_enhanced_recognition.py
+- test_images_recognition.py
+- 停止按钮修复说明.md
+- 协议窗口检测优化说明.md
+- 启动文件检查报告.md
+- 实时日志优化说明.md
+- 带标记的图像识别说明.md
+- 环境检查界面更新说明.md
+- 高置信度点击优化说明.md
+- 图像识别优化方案.md
+- 项目文件总览.md
+
+**创建的文档**:
+- `项目说明.md` - 统一的项目文档
+- `项目检查报告.md` - 运行前检查清单
+- `OPENCV_INTEGRATION_COMPLETE.md` - OpenCV 集成完成报告
+
+#### 阶段5: 关键 Bug 修复
+
+**问题1**: main() 函数使用旧方法
+- **原因**: `main()` 调用的是 `bot.run()` (Playwright 浏览器方法)
+- **修复**: 改为循环调用 `bot.visit_pubg_page()` (Steam 客户端方法)
+
+**问题2**: self.PYAUTOGUI_AVAILABLE 不存在
+- **原因**: `PYAUTOGUI_AVAILABLE` 是全局变量，不是类属性
+- **修复**: `self.PYAUTOGUI_AVAILABLE` → `PYAUTOGUI_AVAILABLE`
+
+**问题3**: wait_for_steam_ready() 检测失败
+- **原因**: 等待 `steamwebhelper.exe` 但检测不到
+- **修复**: 简化为只检测 `steam.exe` 进程存在即可
+
+**问题4**: Steam 启动后立即失败
+- **原因**: 各种检测逻辑问题
+- **修复**: 完善错误处理和超时机制
+
+### 技术细节
+
+#### OpenCV 图像识别
+
+**方法**：
+```python
+# 模板匹配
+result = cv2.matchTemplate(screen_gray, template, cv2.TM_CCORR_NORMED)
+min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+similarity = max_val  # 0-1 范围
+location = max_loc    # (x, y) 坐标
+```
+
+**阈值设置**：
+- **协议窗口检测**: 50% (similarity >= 0.50)
+- **点击按钮**: 95% (similarity >= 0.95)
+
+**激活窗口**：
+```python
+keywords = ["许可", "协议", "License", "Agreement", "User", "EULA", 
+            "Terms", "PUBG", "BATTLEGROUNDS", "Steam", "Subscriber", "Accept", "同意"]
+```
+
+#### 完整工作流程
+
+```
+1. 加载账号 ✅
+   ↓
+2. 清理残留进程 ✅
+   ↓
+3. Steam 客户端登录 ✅
+   - steam.exe -login <user> <pass>
+   - 等待 steam.exe 进程启动
+   ↓
+4. 启动 PUBG 游戏 ✅
+   - steam.exe -applaunch 578080
+   ↓
+5. 检测协议窗口 ✅
+   - OpenCV 全屏搜索
+   - 相似度 >= 50% 认为存在
+   ↓
+6. 点击"接受"按钮 ✅
+   - OpenCV 精确定位
+   - 相似度 >= 95% 才点击
+   ↓
+7. 游戏运行 90 秒 ✅
+   ↓
+8. 关闭游戏和 Steam ✅
+   ↓
+9. 切换下一个账号 ✅
+```
+
+### 文件变更总结
+
+**核心文件**:
+- `src/login_steam.py` - 主脚本 (已更新)
+- `src/steam_login_gui.py` - GUI (已更新)
+- `src/accept_button.png` - 模板图片 (82x17 像素)
+
+**配置文件**:
+- `accounts.txt` - 账号列表
+- `config.json` - GUI 配置
+- `requirements.txt` - Python 依赖
+
+**文档**:
+- `项目说明.md` - 项目总览
+- `项目检查报告.md` - 运行前检查
+- `CLAUDE.md` - 本文件
+
+### 当前状态
+
+**版本**: v2.2 (图像识别版)
+
+**已实现功能**:
+- ✅ Steam 客户端登录
+- ✅ PUBG 游戏启动
+- ✅ OpenCV 智能协议窗口检测
+- ✅ 高精度图像识别点击 (95% 置信度)
+- ✅ 全屏任意位置按钮识别
+- ✅ 游戏运行 90 秒
+- ✅ 完整的进程管理
+
+**待改进功能**:
+- ⏳ Steam 加载完成的精确检测 (当前只检测进程存在)
+  - 用户建议：等待 Steam 商店页面加载完成后再启动 PUBG
+  - 可能方案：检测 Steam 窗口标题或使用 pywin32
+
+### 依赖项
+
+**必需**:
+- Python 3.8+
+- pyautogui
+- pillow
+- opencv-python
+- numpy
+
+**可选** (GUI 需要但命令行不需要):
+- playwright (已不用，可以移除)
+
+### 测试账号
+
+```
+账号: 89599811
+密码: 35935445
+邮箱: YSdqSVVK@744368.ljjmail.com
+邮箱密码: 742001
+邮箱地址: https://mail.pubgs.team
+```
+
+### 遇到的问题和解决方案
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| pyautogui 识别失败 | 算法精度不够 | 改用 OpenCV TM_CCORR_NORMED |
+| 协议窗口误点击 | 置信度太低 | 设置 95% 阈值 |
+| 脚本立即结束 | main() 用错方法 | 改用 visit_pubg_page() |
+| self.PYAUTOGUI_AVAILABLE | 不是类属性 | 改用全局变量 |
+| Steam 检测失败 | 等待 steamwebhelper.exe | 只检测 steam.exe |
+| 项目文件混乱 | 太多测试文件 | 删除 12+ 冗余文件 |
+
+---
+
+*最后更新: 2026-03-06*
+*版本: v2.2 (图像识别版)*
+*OpenCV 成功率: 100% (3/3 测试图片)*

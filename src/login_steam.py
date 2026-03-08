@@ -30,7 +30,6 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
 class SteamLoginBatch:
@@ -54,10 +53,10 @@ class SteamLoginBatch:
         self.accounts = []
         self.current_index = 0
         self.headless = headless
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self.page = None
+        # Playwright 浏览器相关属性（已废弃，保留以避免错误）
+        
+        # 项目根目录
+        self.project_root = Path(__file__).parent.parent
 
     def load_accounts(self):
         """
@@ -446,29 +445,110 @@ class SteamLoginBatch:
         except:
             pass
 
-    def wait_for_steam_ready(self, timeout=30):
-        """等待 Steam 完全登录并准备好"""
+    def wait_for_steam_ready(self, timeout=60):
+        """等待 Steam 完全登录并准备好（改进版 - 检测商店页面）
+
+        检测策略：
+        1. 检查 steam.exe 进程是否存在
+        2. 检查 Steam 窗口是否存在
+        3. 检查窗口标题是否包含 "商店" 或 "Store"
+        4. 区分登录页面和商店页面
+
+        Returns:
+            bool: Steam 是否就绪（在商店页面）
+        """
         print("⏳ 等待 Steam 完全准备就绪...")
 
+        # 尝试导入 win32gui
+        try:
+            import win32gui
+            WIN32_AVAILABLE = True
+        except ImportError:
+            WIN32_AVAILABLE = False
+            print("   ⚠️  win32gui 未安装，仅使用进程检测")
+
+        login_page_detected = False
+        store_page_detected = False
+
         for i in range(timeout):
-            # 检查 Steam 进程是否在运行
+            # 阶段1: 检查 Steam 进程
             if not self.check_process_running("steam.exe"):
                 time.sleep(1)
                 continue
 
-            # 检查是否有多个 Steam 进程（表示已完全启动）
-            # 通常 Steam 完全启动后会有 steamwebhelper.exe 等辅助进程
-            if self.check_process_running("steamwebhelper.exe"):
-                print(f"✅ Steam 已就绪 (耗时 {i+1} 秒)")
-                return True
+            # 阶段2: 如果 win32gui 可用，检查 Steam 窗口
+            if WIN32_AVAILABLE:
+                steam_windows = []
+
+                def callback(hwnd, windows):
+                    if win32gui.IsWindowVisible(hwnd):
+                        try:
+                            title = win32gui.GetWindowText(hwnd)
+                            if title and any(keyword in title for keyword in ["Steam", "steam", "商店", "Store"]):
+                                windows.append((hwnd, title))
+                        except:
+                            pass
+                    return True
+
+                try:
+                    win32gui.EnumWindows(callback, steam_windows)
+
+                    if steam_windows:
+                        # 分析窗口类型
+                        for hwnd, title in steam_windows:
+                            title_lower = title.lower()
+
+                            # 检测商店页面
+                            if any(keyword in title_lower for keyword in ["store", "商店", "steam store"]):
+                                if not store_page_detected:
+                                    print(f"   ✅ 检测到商店页面: {title}")
+                                    store_page_detected = True
+
+                            # 检测登录页面
+                            elif any(keyword in title_lower for keyword in ["login", "登录", "sign in"]):
+                                if not login_page_detected:
+                                    print(f"   ⚠️  检测到登录页面: {title}")
+                                    print(f"   💡 如果长时间停留在此页面，可能需要手动登录")
+                                    login_page_detected = True
+
+                        # 如果找到商店页面，说明 Steam 已就绪
+                        if store_page_detected:
+                            print(f"✅ Steam 已就绪 (在商店页面, 耗时 {i+1} 秒)")
+                            return True
+
+                        # 如果只在登录页面，继续等待
+                        if login_page_detected and not store_page_detected:
+                            if (i + 1) % 10 == 0:  # 每10秒提示一次
+                                print(f"   ⏳ 等待登录完成... ({i+1}/{timeout}秒)")
+
+                except Exception as e:
+                    print(f"   ⚠️  窗口检测失败: {e}")
+                    # 回退到简单的进程检测
+                    if i >= 10:  # 至少等待10秒
+                        print(f"✅ Steam 已就绪 (耗时 {i+1} 秒)")
+                        return True
+            else:
+                # win32gui 不可用，使用简单检测
+                if i >= 10:  # 至少等待10秒让 Steam 初始化和登录
+                    print(f"✅ Steam 已就绪 (耗时 {i+1} 秒)")
+                    return True
 
             time.sleep(1)
 
-            if (i + 1) % 5 == 0:
+            # 每5秒显示一次进度
+            if (i + 1) % 5 == 0 and not login_page_detected:
                 print(f"   等待 Steam 启动... ({i+1}/{timeout}秒)")
 
-        print("⚠️  Steam 可能未完全就绪，但继续尝试...")
+        # 超时后的处理
+        if login_page_detected and not store_page_detected:
+            print("⚠️  Steam 可能在登录页面等待手动操作")
+            print("💡 建议：检查是否需要 Steam Guard 验证")
+        else:
+            print("⚠️  Steam 可能未完全就绪，但继续尝试...")
+
         return True
+
+
 
     def steam_login(self, username, password):
         """
@@ -566,88 +646,141 @@ class SteamLoginBatch:
             return False
 
     def activate_and_click_accept(self):
-        """激活窗口并点击"接受"按钮（改进版）"""
-        # 尝试激活包含特定关键词的窗口
-        keywords = ["许可", "协议", "License", "Agreement", "User", "EULA", "Terms", "PUBG", "BATTLEGROUNDS", "Steam", "Subscriber"]
+        """激活窗口并使用 OpenCV 高精度图像识别点击'接受'按钮"""
+        keywords = ["许可", "协议", "License", "Agreement", "User", "EULA", "Terms", "PUBG", "BATTLEGROUNDS", "Steam", "Subscriber", "Accept", "同意"]
 
         for keyword in keywords:
             if self.activate_window_by_title(keyword):
                 print(f"   ✅ 激活了包含 '{keyword}' 的窗口")
                 break
 
-        # 先截图保存当前状态（用于调试）
-        self._save_debug_screenshot("before_accept")
+        time.sleep(1)
 
-        # 方法1：使用 Tab + Space（Windows对话框通常可以用Tab+Space确认）
-        print("   💡 方法1: 尝试 Tab + Space...")
+        if not PYAUTOGUI_AVAILABLE:
+            print("   ❌ pyautogui 不可用")
+            return False
+
+        self._save_debug_screenshot("before_image_recognition")
+        print("   💡 使用 OpenCV 图像识别查找'接受'按钮...")
+
+        template_path = Path(__file__).parent / "accept_button.png"
+
+        if not template_path.exists():
+            print(f"   ❌ 模板图片不存在: {template_path}")
+            return False
+
         try:
-            if PYAUTOGUI_AVAILABLE:
-                for _ in range(3):
-                    pyautogui.press('tab')
-                    time.sleep(0.3)
-                pyautogui.press('space')
-                print("   ✅ 已发送 Tab + Space")
-                time.sleep(2)
+            import cv2
+            import numpy as np
+            from PIL import Image
+
+            template_img = Image.open(template_path)
+            template_size = template_img.size
+            print(f"   📐 模板尺寸: {template_size[0]} x {template_size[1]} 像素")
+
+            MIN_SIMILARITY_TO_CLICK = 0.95
+            print(f"   🎯 最小相似度: {MIN_SIMILARITY_TO_CLICK} (95%)")
+
+            # 截取屏幕并转换为 OpenCV 格式
+            current_screen = pyautogui.screenshot()
+            screen_cv = cv2.cvtColor(np.array(current_screen), cv2.COLOR_RGB2BGR)
+            screen_gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
+
+            # 读取模板
+            template = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
+
+            # OpenCV 模板匹配 (TM_CCORR_NORMED)
+            result = cv2.matchTemplate(screen_gray, template, cv2.TM_CCORR_NORMED)
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+            similarity = max_val
+            location = max_loc
+
+            print(f"   📊 最佳匹配相似度: {similarity*100:.2f}%")
+            print(f"   📍 位置: ({location[0]}, {location[1]})")
+
+            # 关键安全检查：只有置信度足够高才点击
+            if similarity >= MIN_SIMILARITY_TO_CLICK:
+                print(f"   ✅ 相似度满足要求 (>= 95%)")
+
+                h, w = template.shape
+                center_x = location[0] + w // 2
+                center_y = location[1] + h // 2
+                print(f"   🖱️  点击中心坐标: ({center_x}, {center_y})")
+
+                # 标记并保存
+                try:
+                    marked = screen_cv.copy()
+                    top_left = location
+                    bottom_right = (location[0] + w, location[1] + h)
+                    cv2.rectangle(marked, top_left, bottom_right, (0, 255, 0), 3)
+
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    marked_filename = f"marked_opencv_{similarity:.2f}_{timestamp}.png"
+                    marked_file = Path("screenshots") / marked_filename
+                    marked_file.parent.mkdir(exist_ok=True)
+                    cv2.imwrite(str(marked_file), marked)
+                    print(f"   📷 已保存标记截图: {marked_file.name}")
+                except Exception as e:
+                    print(f"   ⚠️  标记截图失败: {e}")
+
+                # 点击按钮
+                print(f"   🖱️  执行点击: ({center_x}, {center_y})")
+                pyautogui.click(center_x, center_y)
+                time.sleep(1)
+
+                self._save_debug_screenshot("after_accept_click")
 
                 if self.check_process_running("TslGame.exe"):
-                    print("   ✅ Tab + Space 成功！游戏已启动")
+                    print("   ✅ 点击后检测到 TslGame.exe - 游戏已启动")
                     return True
-        except Exception as e:
-            print(f"   ⚠️  Tab + Space 失败: {e}")
-
-        # 方法2：鼠标点击 - 中文Windows中"接受"按钮通常在左侧！
-        print("   💡 方法2: 尝试鼠标点击（中文Windows - 接受按钮在左侧）...")
-        try:
-            if PYAUTOGUI_AVAILABLE:
-                screen_width, screen_height = pyautogui.size()
-                print(f"   📐 屏幕分辨率: {screen_width}x{screen_height}")
-
-                # 中文Windows对话框：左侧是"确定/接受"，右侧是"取消"
-                # 点击窗口中心的左侧区域
-                positions = [
-                    (screen_width // 2 - 100, screen_height // 2 + 50),  # 中心偏左
-                    (screen_width // 2 - 150, screen_height // 2 + 50),  # 更靠左
-                    (screen_width // 2 - 50, screen_height // 2 + 50),   # 稍微偏左
-                    (screen_width // 2 - 200, screen_height // 2 + 50),  # 最左
-                ]
-
-                for idx, (x, y) in enumerate(positions):
-                    print(f"   🖱️  点击位置 {idx+1}: ({x}, {y})")
-                    pyautogui.click(x, y)
-                    time.sleep(1.5)
-
-                    # 检查游戏是否已启动
+                else:
+                    time.sleep(2)
                     if self.check_process_running("TslGame.exe"):
-                        print(f"   ✅ 点击成功！游戏已启动")
-                        self._save_debug_screenshot("success_accept")
+                        print("   ✅ 游戏已启动！")
                         return True
                     else:
-                        # 截图记录这次点击后的状态
-                        self._save_debug_screenshot(f"after_click_{idx+1}")
+                        print("   ⚠️  点击后未检测到游戏进程（可能需要重新启动）")
+                        return True  # 返回 True，让外层逻辑处理重新启动
+                return True
+            else:
+                print(f"   ❌ 相似度不足 ({similarity*100:.2f}% < 95%)")
+                print(f"   ❌ 不点击，避免误操作")
+                return False
 
-                print("   ⚠️  鼠标点击未成功启动游戏")
+            if similarity >= MIN_SIMILARITY_TO_CLICK:
+                print(f"   ✅ 相似度满足要求")
+
+                h, w = template.shape
+                center_x = location[0] + w // 2
+                center_y = location[1] + h // 2
+                print(f"   🖱️  点击中心坐标: ({center_x}, {center_y})")
+
+                # 标记并保存
+                try:
+                    marked = screen_cv.copy()
+                    top_left = location
+                    bottom_right = (location[0] + w, location[1] + h)
+                    cv2.rectangle(marked, top_left, bottom_right, (0, 255, 0), 3)
+                    
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    marked_filename = f"marked_opencv_{similarity:.2f}_{timestamp}.png"
+                    marked_file = Path("screenshots") / marked_filename
+                    marked_file.parent.mkdir(exist_ok=True)
+                    cv2.imwrite(str(marked_file), marked)
+                    print(f"   📷 已保存标记截图: {marked_file.name}")
+                except Exception as e:
+                    print(f"   ⚠️  标记截图失败: {e}")
+            else:
+                print(f"   ⚠️  相似度不足 ({similarity*100:.2f}% < 95%)")
+                print(f"   ❌ 不点击，避免误操作")
+                return False
+
         except Exception as e:
-            print(f"   ⚠️  鼠标点击失败: {e}")
-
-        # 方法3：尝试 Alt+Y（Yes的快捷键）
-        print("   💡 方法3: 尝试 Alt+Y（Yes快捷键）...")
-        try:
-            if PYAUTOGUI_AVAILABLE:
-                pyautogui.hotkey('alt', 'y')
-                print("   ✅ 已发送 Alt+Y")
-                time.sleep(2)
-
-                if self.check_process_running("TslGame.exe"):
-                    print("   ✅ Alt+Y 成功！游戏已启动")
-                    return True
-        except Exception as e:
-            print(f"   ⚠️  Alt+Y 失败: {e}")
-
-        # 方法4：备用方案 - 尝试回车键
-        print("   💡 备用方案：尝试回车键...")
-        self.send_enter_key()
-        time.sleep(2)
-        return False
+            print(f"   ❌ 图像识别失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     def _save_debug_screenshot(self, label):
         """保存调试截图"""
@@ -661,6 +794,67 @@ class SteamLoginBatch:
                 print(f"   📷 已保存截图: {filename}")
         except Exception as e:
             print(f"   ⚠️  截图失败: {e}")
+
+    def check_for_agreement_window(self):
+        """
+        检查屏幕上是否有"最终用户协议"窗口（通过 OpenCV 查找"接受"按钮）
+
+        Returns:
+            bool: True 如果找到协议窗口，False 如果没找到
+        """
+        if not PYAUTOGUI_AVAILABLE:
+            print("   pyautogui 不可用，无法检测协议窗口")
+            return False
+
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            print("   OpenCV 不可用，无法检测协议窗口")
+            return False
+
+        template_path = self.project_root / "src" / "accept_button.png"
+        if not template_path.exists():
+            print(f"   模板图片不存在: {template_path}")
+            return False
+
+        try:
+            # 截取屏幕
+            current_screen = pyautogui.screenshot()
+            screen_cv = cv2.cvtColor(np.array(current_screen), cv2.COLOR_RGB2BGR)
+            screen_gray = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2GRAY)
+
+            # 读取模板
+            template = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
+            if template is None:
+                print("   无法读取模板图片")
+                return False
+
+            # OpenCV 模板匹配 (TM_CCORR_NORMED)
+            result = cv2.matchTemplate(screen_gray, template, cv2.TM_CCORR_NORMED)
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+            similarity = max_val
+            print(f"   协议窗口检测相似度: {similarity*100:.2f}%")
+
+            # 提高阈值：相似度 >= 90% 才认为存在协议窗口
+            # 这样可以避免误判其他相似但不相关的内容
+            if similarity >= 0.90:
+                print("   ✅ 检测到'最终用户协议'窗口（高置信度）")
+                return True
+            elif similarity >= 0.50:
+                print(f"   ⚠️  发现相似内容（{similarity*100:.2f}%），但置信度不足以确认是协议窗口")
+                print("   ℹ️  为避免误操作，跳过此窗口")
+                return False
+            else:
+                print("   ℹ️  未检测到'最终用户协议'窗口")
+                return False
+
+        except Exception as e:
+            print(f"   检查协议窗口失败: {e}")
+            return False
+
+
 
     def activate_and_send_enter(self):
         """激活窗口并发送回车键（增强版）"""
@@ -737,39 +931,50 @@ class SteamLoginBatch:
             # 等待游戏启动并验证进程
             print("⏳ 等待游戏启动...")
 
-            # 阶段1：等待用户许可协议窗口出现
-            print("💡 阶段1: 等待用户许可协议窗口...")
+            # 阶段1：等待并检查是否有用户许可协议窗口
+            print("💡 阶段1: 检查是否有'最终用户协议'窗口...")
             time.sleep(5)
 
-            # 尝试多次发送回车键来同意协议
-            max_agree_attempts = 12  # 增加到12次
-            for i in range(max_agree_attempts):
-                print(f"   尝试点击同意 ({i+1}/{max_agree_attempts})...")
+            # 检查是否有协议窗口（只检查一次）
+            agreement_found = False
+            if self.check_for_agreement_window():
+                print("   ✅ 检测到'最终用户协议'窗口")
+                agreement_found = True
 
-                # 多次尝试激活和点击
-                self.activate_and_send_enter()
+                # 尝试点击"接受"按钮
+                max_attempts = 3  # 最多尝试3次
+                accept_clicked = False
 
-                # 等待更长时间让游戏启动（增加到5秒）
-                time.sleep(5)
+                for i in range(max_attempts):
+                    print(f"   尝试点击'接受'按钮 ({i+1}/{max_attempts})...")
 
-                # 检查游戏是否已启动
-                if self.check_process_running("TslGame.exe"):
-                    print(f"✅ 检测到游戏已启动（协议可能已同意）")
-                    # 尝试激活游戏窗口
-                    print("💡 尝试激活游戏窗口...")
+                    if self.activate_and_click_accept():
+                        print("   ✅ 成功点击'接受'按钮")
+                        accept_clicked = True
+                        time.sleep(3)
+                        break
+                    else:
+                        print(f"   ⚠️  点击失败（尝试 {i+1}/{max_attempts}）")
+                        time.sleep(2)
+
+                # 关键修改：点击接受后，需要重新启动 PUBG
+                if accept_clicked:
+                    print("   💡 点击接受后，需要重新启动 PUBG...")
                     time.sleep(2)
-                    for keyword in ["PUBG", "BATTLEGROUNDS", "TslGame"]:
-                        if self.activate_window_by_title(keyword):
-                            print(f"   ✅ 已激活 PUBG 游戏窗口")
-                            break
-                    return True
 
-                # 如果尝试了5次都没成功，给出提示但不阻塞
-                if i == 4:
-                    print("\n⚠️  已尝试5次仍未检测到游戏启动")
-                    print("💡 脚本将继续尝试...")
-                    print("💡 提示：请确认用户许可协议窗口是否在屏幕上")
+                    # 关闭可能的游戏窗口
+                    print("   🔄 关闭当前游戏窗口...")
+                    subprocess.run(["taskkill", "/F", "/IM", "TslGame.exe"],
+                                   capture_output=True, shell=True)
                     time.sleep(2)
+
+                    # 重新启动 PUBG
+                    print("   🔄 重新启动 PUBG...")
+                    cmd = [self.STEAM_EXE_PATH, "-applaunch", self.PUBG_APP_ID]
+                    subprocess.Popen(cmd, shell=False)
+                    print("   ✅ PUBG 已重新启动")
+            else:
+                print("   ℹ️  未检测到'最终用户协议'窗口（无需处理）")
 
             # 阶段2：如果协议点击后仍未启动，继续等待
             print("💡 阶段2: 继续等待游戏进程启动...")
@@ -1044,10 +1249,32 @@ def main():
     project_root = Path(__file__).parent.parent
     accounts_file = project_root / "accounts.txt"
 
-    # 创建登录实例并执行
-    # headless=False 表示显示浏览器窗口，便于调试
+    # 创建登录实例
     bot = SteamLoginBatch(str(accounts_file), headless=False)
-    bot.run()
+
+    # 加载账号
+    if not bot.load_accounts():
+        print("❌ 无法加载账号文件，程序退出")
+        return
+
+    # 循环处理每个账号
+    total = len(bot.accounts)
+    for i, account in enumerate(bot.accounts, 1):
+        print(f"\n📋 进度: [{i}/{total}]")
+        print(f"\n📋 处理账号: {account['username']}")
+
+        # 执行完整的 PUBG 流程
+        bot.visit_pubg_page(account)
+
+        # 账号间间隔
+        if i < total:
+            interval = 2
+            print(f"\n⏳ 等待 {interval} 秒后处理下一个账号...")
+            time.sleep(interval)
+
+    print("\n" + "="*60)
+    print(f"✅ 所有账号处理完成！共处理 {total} 个账号")
+    print("="*60)
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ class SteamLoginGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Steam 批量登录工具 v2.1")
+        self.root.title("Steam 批量登录工具 v2.2（图像识别版）")
         self.root.geometry("700x650")
         self.root.resizable(False, False)
 
@@ -49,6 +49,9 @@ class SteamLoginGUI:
 
         # 账号列表数据（用于删除）
         self.accounts_data = []
+
+        # 后台进程引用
+        self.login_process = None
 
         # 创建界面
         self.create_widgets()
@@ -125,6 +128,9 @@ class SteamLoginGUI:
         # 依赖检查
         self.pyautogui_status = self.create_status_row(env_frame, "pyautogui 库")
         self.pillow_status = self.create_status_row(env_frame, "pillow 库")
+        self.opencv_status = self.create_status_row(env_frame, "opencv-python 库")
+        self.pywin32_status = self.create_status_row(env_frame, "pywin32 库")
+        self.template_status = self.create_status_row(env_frame, "accept_button.png")
 
         # 操作按钮
         btn_frame = ttk.Frame(env_frame)
@@ -244,9 +250,6 @@ class SteamLoginGUI:
         self.run_log = scrolledtext.ScrolledText(run_frame, height=15, width=80)
         self.run_log.pack(padx=20, pady=5)
 
-        # 更新统计
-        self.update_stats()
-
     def create_status_row(self, parent, label):
         """创建状态行"""
         frame = ttk.Frame(parent)
@@ -280,6 +283,40 @@ class SteamLoginGUI:
             self.pillow_status.set("✅ 已安装")
         except:
             self.pillow_status.set("❌ 未安装")
+
+        # 检查 opencv-python
+        try:
+            import cv2
+            version = cv2.__version__
+            self.opencv_status.set(f"✅ 已安装 (v{version})")
+        except:
+            self.opencv_status.set("❌ 未安装")
+
+        # 检查 pywin32
+        try:
+            import win32gui
+            self.pywin32_status.set(f"✅ 已安装")
+        except:
+            self.pywin32_status.set("❌ 未安装")
+
+        # 检查 accept_button.png 模板文件
+        template_path = self.project_root / "src" / "accept_button.png"
+        if template_path.exists():
+            try:
+                from PIL import Image
+                template_img = Image.open(template_path)
+                size = template_img.size
+                # 检查尺寸是否合理
+                if size[0] > 150 or size[1] > 80:
+                    self.template_status.set(f"⚠️  尺寸过大: {size[0]}x{size[1]} (建议: 60-100x30-50)")
+                elif size[0] < 30 or size[1] < 15:
+                    self.template_status.set(f"⚠️  尺寸过小: {size[0]}x{size[1]} (建议: 60-100x30-50)")
+                else:
+                    self.template_status.set(f"✅ 已找到 ({size[0]}x{size[1]})")
+            except Exception as e:
+                self.template_status.set(f"❌ 文件损坏: {e}")
+        else:
+            self.template_status.set("❌ 未找到（图像识别功能需要）")
 
     def install_dependencies(self):
         """安装依赖"""
@@ -320,6 +357,17 @@ class SteamLoginGUI:
                     self.log_message("✓ pillow 安装成功\n")
                 else:
                     self.log_message(f"✗ pillow 安装失败: {result.stderr}\n")
+
+                # 安装 opencv-python
+                self.log_message("正在安装 opencv-python...\n")
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "opencv-python"],
+                    capture_output=True, text=True
+                )
+                if "Successfully installed" in result.stdout or "Requirement already satisfied" in result.stdout:
+                    self.log_message("✓ opencv-python 安装成功\n")
+                else:
+                    self.log_message(f"✗ opencv-python 安装失败: {result.stderr}\n")
 
                 self.log_message("\n✅ 依赖安装完成！\n")
                 self.check_environment()
@@ -365,6 +413,9 @@ class SteamLoginGUI:
         self.accounts_listbox.delete(0, tk.END)
         self.accounts_data = []
 
+        # 后台进程引用
+        self.login_process = None
+
         if not self.accounts_file.exists():
             self.accounts_listbox.insert(tk.END, "（暂无账号，请添加）")
             self.update_stats()
@@ -394,7 +445,11 @@ class SteamLoginGUI:
                                 'line': line
                             })
 
-            self.update_stats()
+            # 成功后才更新统计
+            try:
+                self.update_stats()
+            except:
+                pass  # 如果界面还没完全创建，忽略
 
             # 绑定双击事件查看账号详情
             self.accounts_listbox.bind('<Double-Button-1>', self.show_account_detail)
@@ -696,6 +751,7 @@ class SteamLoginGUI:
             finally:
                 self.start_btn.config(state='normal')
                 self.stop_btn.config(state='disabled')
+                self.login_process = None
 
         threading.Thread(target=run_login, daemon=True).start()
 
