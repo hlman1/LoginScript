@@ -26,9 +26,10 @@ class SteamLoginGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Steam 批量登录工具 v2.2（图像识别版）")
-        self.root.geometry("700x650")
-        self.root.resizable(False, False)
+        self.root.title("Steam 批量登录工具 v3.0（图像识别完美版）")
+        self.root.geometry("900x750")
+        self.root.resizable(True, True)
+        self.root.minsize(800, 650)
 
         # 获取项目根目录（兼容从任意位置启动）
         if getattr(sys, 'frozen', False):
@@ -141,7 +142,7 @@ class SteamLoginGUI:
 
         # 日志区域
         ttk.Label(env_frame, text="安装日志：").pack(anchor='w', padx=20, pady=(10, 0))
-        self.env_log = scrolledtext.ScrolledText(env_frame, height=10, width=80)
+        self.env_log = scrolledtext.ScrolledText(env_frame, height=12, width=90)
         self.env_log.pack(padx=20, pady=5)
 
     def create_config_tab(self, notebook):
@@ -192,7 +193,7 @@ class SteamLoginGUI:
         scrollbar.pack(side='right', fill='y')
 
         # 列表框
-        self.accounts_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, height=15)
+        self.accounts_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, height=18)
         self.accounts_listbox.pack(side='left', fill='both', expand=True)
         scrollbar.config(command=self.accounts_listbox.yview)
 
@@ -247,7 +248,7 @@ class SteamLoginGUI:
 
         # 日志区域
         ttk.Label(run_frame, text="运行日志：").pack(anchor='w', padx=20, pady=(10, 0))
-        self.run_log = scrolledtext.ScrolledText(run_frame, height=15, width=80)
+        self.run_log = scrolledtext.ScrolledText(run_frame, height=18, width=90)
         self.run_log.pack(padx=20, pady=5)
 
     def create_status_row(self, parent, label):
@@ -369,6 +370,37 @@ class SteamLoginGUI:
                 else:
                     self.log_message(f"✗ opencv-python 安装失败: {result.stderr}\n")
 
+                # 安装 pywin32
+                self.log_message("正在安装 pywin32...\n")
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "pywin32"],
+                    capture_output=True, text=True
+                )
+                if "Successfully installed" in result.stdout or "Requirement already satisfied" in result.stdout:
+                    self.log_message("✓ pywin32 安装成功\n")
+
+                    # pywin32 配置
+                    self.log_message("正在配置 pywin32...\n")
+                    try:
+                        import site
+                        site_packages = site.getsitepackages()[0]
+                        post_install = os.path.join(site_packages, "pywin32_postinstall.py")
+                        if os.path.exists(post_install):
+                            result = subprocess.run(
+                                [sys.executable, post_install, "-install"],
+                                capture_output=True, text=True
+                            )
+                            if result.returncode == 0:
+                                self.log_message("✓ pywin32 配置成功\n")
+                            else:
+                                self.log_message(f"⚠ pywin32 配置警告: {result.stderr}\n")
+                        else:
+                            self.log_message("⚠ 未找到配置脚本（可能已配置）\n")
+                    except Exception as e:
+                        self.log_message(f"⚠ pywin32 配置跳过: {e}\n")
+                else:
+                    self.log_message(f"✗ pywin32 安装失败: {result.stderr}\n")
+
                 self.log_message("\n✅ 依赖安装完成！\n")
                 self.check_environment()
                 self.root.after(0, lambda: messagebox.showinfo("完成", "依赖安装完成！"))
@@ -461,7 +493,8 @@ class SteamLoginGUI:
         """添加账号对话框"""
         dialog = tk.Toplevel(self.root)
         dialog.title("添加账号")
-        dialog.geometry("400x300")
+        dialog.geometry("500x400")
+        dialog.minsize(450, 350)
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -548,7 +581,8 @@ class SteamLoginGUI:
         # 创建详情对话框
         dialog = tk.Toplevel(self.root)
         dialog.title("账号详情")
-        dialog.geometry("500x320")
+        dialog.geometry("600x400")
+        dialog.minsize(550, 350)
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -601,7 +635,8 @@ class SteamLoginGUI:
         # 创建编辑对话框
         dialog = tk.Toplevel(self.root)
         dialog.title(f"编辑账号 - {account['username']}")
-        dialog.geometry("500x380")
+        dialog.geometry("600x450")
+        dialog.minsize(550, 400)
         dialog.transient(self.root)
         dialog.grab_set()
 
